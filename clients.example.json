@@ -1,0 +1,9 @@
+[
+  {
+    "id": "mybase",
+    "apiKey": "generate-with: openssl rand -hex 32",
+    "webhookUrl": "https://app.example.com/webhooks/whatsapp",
+    "webhookSecret": "generate-with: openssl rand -hex 32",
+    "admin": true
+  }
+]

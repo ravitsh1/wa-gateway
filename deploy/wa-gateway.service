@@ -1,0 +1,23 @@
+# /etc/systemd/system/wa-gateway.service
+# Adjust User and paths, then: systemctl daemon-reload && systemctl enable --now wa-gateway
+[Unit]
+Description=wa-gateway (WhatsApp linked-device gateway)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wa-gateway
+WorkingDirectory=/opt/wa-gateway
+EnvironmentFile=/opt/wa-gateway/.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning dist/src/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wa-gateway/data
+
+[Install]
+WantedBy=multi-user.target

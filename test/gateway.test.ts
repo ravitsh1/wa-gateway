@@ -10,7 +10,7 @@ import { parseClients, type Config } from '../src/config.js'
 import { Db } from '../src/db.js'
 import { Gateway, type SessionStatus, type Transport } from '../src/gateway.js'
 import { normalizeMessage } from '../src/normalize.js'
-import { jidToPhone, normalizePhone } from '../src/phone.js'
+import { jidToPhone, keyToPhone, normalizePhone } from '../src/phone.js'
 import { buildServer } from '../src/server.js'
 import { backoffMs, sign, verify, WebhookWorker } from '../src/webhooks.js'
 
@@ -82,6 +82,18 @@ test('phone normalization', () => {
   assert.equal(jidToPhone('120363000000000000@g.us'), null)
   assert.equal(jidToPhone('1234567890123@lid'), null)
   assert.equal(jidToPhone('status@broadcast'), null)
+})
+
+test('a status update is not a message in the chat of whoever posted it', () => {
+  const pn = '972501234567@s.whatsapp.net'
+  assert.equal(keyToPhone({ remoteJid: pn }), '972501234567')
+  assert.equal(keyToPhone({ remoteJid: '1234567890123@lid', remoteJidAlt: pn }), '972501234567')
+  assert.equal(keyToPhone({ remoteJid: '1234567890123@lid' }), null) // left to the LID lookup
+  // what WhatsApp sends when a contact posts a status: the poster's number is only the alternate address
+  assert.equal(keyToPhone({ remoteJid: 'status@broadcast', remoteJidAlt: pn }), null)
+  assert.equal(keyToPhone({ remoteJid: '120363000000000000@g.us', remoteJidAlt: pn }), null)
+  assert.equal(keyToPhone({ remoteJid: '120363000000000000@newsletter', remoteJidAlt: pn }), null)
+  assert.equal(keyToPhone(undefined), null)
 })
 
 test('normalizeMessage maps kinds and skips protocol traffic', () => {

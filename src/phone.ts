@@ -19,3 +19,15 @@ export function jidToPhone(jid: string | null | undefined): string | null {
 }
 
 export const isLidJid = (jid: string | null | undefined) => !!jid && /@lid$/.test(jid)
+
+/**
+ * The phone of the 1:1 chat a message belongs to, as far as the message itself says; null when it says nothing.
+ * The alternate address is read only for a LID chat, which is a conversation with one person. A status update
+ * arrives in "status@broadcast" and carries its poster's own number as the alternate address, so reading it
+ * there would pass the status for a message in that person's chat.
+ */
+export function keyToPhone(key: { remoteJid?: string | null; remoteJidAlt?: string | null } | null | undefined): string | null {
+  const direct = jidToPhone(key?.remoteJid)
+  if (direct) return direct
+  return isLidJid(key?.remoteJid) ? jidToPhone(key?.remoteJidAlt) : null
+}

@@ -12,7 +12,7 @@ import {
 } from 'baileys'
 import { pino } from 'pino'
 import type { Gateway, SessionState, SessionStatus, Transport } from './gateway.js'
-import { isLidJid, jidToPhone, phoneToJid } from './phone.js'
+import { isLidJid, jidToPhone, keyToPhone, phoneToJid } from './phone.js'
 
 type Log = { info: (o: object, m?: string) => void; warn: (o: object, m?: string) => void }
 
@@ -102,11 +102,11 @@ export class WhatsApp implements Transport {
     })
   }
 
-  /** Resolves the chat to a phone number; anything that is not a 1:1 chat resolves to null and is ignored. */
+  /** Resolves the chat to a phone number; anything that is not a 1:1 chat (a group, a status update, a channel) resolves to null and is ignored. */
   private async chatPhone(sock: WASocket, msg: WAMessage): Promise<string | null> {
-    const jid = msg.key?.remoteJid
-    const direct = jidToPhone(jid) ?? jidToPhone(msg.key?.remoteJidAlt)
+    const direct = keyToPhone(msg.key)
     if (direct) return direct
+    const jid = msg.key?.remoteJid
     if (isLidJid(jid)) return jidToPhone(await sock.signalRepository.lidMapping.getPNForLID(jid!))
     return null
   }

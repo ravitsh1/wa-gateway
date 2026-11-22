@@ -20,6 +20,9 @@ export function jidToPhone(jid: string | null | undefined): string | null {
 
 export const isLidJid = (jid: string | null | undefined) => !!jid && /@lid$/.test(jid)
 
+/** A group's address: 120363012345678901@g.us, or 972501234567-1400000000@g.us for a group from before 2021. */
+export const isGroupJid = (jid: string | null | undefined): jid is string => !!jid && /^\d{5,30}(-\d{5,15})?@g\.us$/.test(jid)
+
 /**
  * The phone of the 1:1 chat a message belongs to, as far as the message itself says; null when it says nothing.
  * The alternate address is read only for a LID chat, which is a conversation with one person. A status update

@@ -47,6 +47,10 @@ function setup(webhookUrl = 'http://127.0.0.1:9/hook') {
       sent.push({ phone, text })
       return `SENT${sent.length}`
     },
+    groups: async () => [
+      { id: '120363000000000002@g.us', name: 'ועד כיתה ג2', participants: 31 },
+      { id: '120363000000000001@g.us', name: 'הורי גן שקד', participants: 24 },
+    ],
     logout: async () => {},
   }
   gateway.transport = transport
@@ -218,6 +222,64 @@ test('HTTP API: auth, tracking, sending only to tracked chats', async () => {
 
   assert.equal((await app.inject({ method: 'DELETE', url: '/v1/chats/0501234567', headers: a })).statusCode, 200)
   assert.equal((await app.inject({ method: 'DELETE', url: '/v1/chats/0501234567', headers: a })).statusCode, 404)
+  await app.close()
+})
+
+test('groups: listed for the admin, forwarded only once tracked, never written to', async () => {
+  const { cfg, db, gateway, sent, session } = setup()
+  const app = buildServer(cfg, db, gateway)
+  const a = { authorization: `Bearer ${KEY_A}` }
+  const b = { authorization: `Bearer ${KEY_B}` }
+  const GAN = '120363000000000001@g.us'
+  const inGroup = (id: string, message: object, opts: { fromMe?: boolean } = {}): WAMessage =>
+    ({
+      key: { id, remoteJid: GAN, participant: '1234567890123@lid', fromMe: opts.fromMe ?? false },
+      messageTimestamp: now(),
+      pushName: 'אמא של יואב',
+      message,
+    }) as unknown as WAMessage
+
+  // not tracked yet: nothing is kept
+  await gateway.onMessage(GAN, inGroup('G0', { conversation: 'בוקר טוב' }), noDownload)
+  assert.equal(db.pendingCount('mybase'), 0)
+
+  assert.equal((await app.inject({ url: '/v1/groups', headers: b })).statusCode, 403)
+  const list = (await app.inject({ url: '/v1/groups', headers: a })).json().groups
+  assert.deepEqual(list.map((g: { name: string; tracked: boolean }) => [g.name, g.tracked]), [['הורי גן שקד', false], ['ועד כיתה ג2', false]])
+
+  assert.equal((await app.inject({ method: 'PUT', url: '/v1/groups/972501234567', headers: a })).statusCode, 400)
+  assert.equal((await app.inject({ method: 'PUT', url: `/v1/groups/${GAN}`, headers: b })).statusCode, 403)
+  const put = await app.inject({ method: 'PUT', url: `/v1/groups/${GAN}`, headers: a, payload: { label: 'הורי גן שקד' } })
+  assert.equal(put.statusCode, 200)
+  assert.equal(put.json().id, GAN)
+  assert.equal((await app.inject({ url: '/v1/groups', headers: a })).json().groups[0].tracked, true)
+  assert.equal((await app.inject({ url: '/v1/chats', headers: a })).json().chats.length, 0) // a group is not a chat to write to
+
+  await gateway.onMessage(GAN, inGroup('G1', { conversation: 'אסיפת הורים ביום שלישי ב-18:00' }), noDownload)
+  await gateway.onMessage(GAN, inGroup('G2', { imageMessage: { mimetype: 'image/jpeg', caption: 'ההזמנה', fileLength: 3 } }), async () => Buffer.from('JPG'))
+  await gateway.onMessage(GAN, inGroup('G3', { videoMessage: { mimetype: 'video/mp4', fileLength: 3 } }), noDownload)
+  await gateway.onMessage(GAN, inGroup('G4', { conversation: 'תודה!' }, { fromMe: true }), noDownload)
+  const ev = events(db, 'mybase')
+  assert.equal(ev.length, 4)
+  assert.deepEqual(ev[0].chat, { group: GAN })
+  assert.equal(ev[0].message.senderName, 'אמא של יואב')
+  assert.equal(ev[0].message.text, 'אסיפת הורים ביום שלישי ב-18:00')
+  assert.equal((await app.inject({ url: `/v1/media/${ev[1].message.media.id}`, headers: a })).body, 'JPG')
+  assert.equal(ev[2].message.media.error, 'skipped')
+  assert.equal(ev[3].message.direction, 'out')
+  assert.equal(db.pendingCount('portal'), 0)
+
+  // there is no way to send into a group: only phone numbers are accepted, and a group address is not one
+  const send = await app.inject({ method: 'POST', url: '/v1/messages', headers: a, payload: { phone: GAN, text: 'x' } })
+  assert.ok(send.statusCode === 400 || send.statusCode === 403)
+  assert.equal(sent.length, 0)
+
+  session.state = 'disconnected'
+  assert.equal((await app.inject({ url: '/v1/groups', headers: a })).statusCode, 503)
+
+  assert.equal((await app.inject({ method: 'DELETE', url: `/v1/groups/${GAN}`, headers: a })).statusCode, 200)
+  await gateway.onMessage(GAN, inGroup('G5', { conversation: 'עוד הודעה' }), noDownload)
+  assert.equal(db.pendingCount('mybase'), 0)
   await app.close()
 })
 

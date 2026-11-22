@@ -5,7 +5,7 @@ import QRCode from 'qrcode'
 import type { Client, Config } from './config.js'
 import type { Db } from './db.js'
 import { GatewayError, type Gateway } from './gateway.js'
-import { normalizePhone } from './phone.js'
+import { isGroupJid, normalizePhone } from './phone.js'
 
 const digest = (s: string) => createHash('sha256').update(s).digest()
 
@@ -72,7 +72,7 @@ export function buildServer(cfg: Config, db: Db, gateway: Gateway, logger: boole
 
     // --- tracked chats ---
 
-    v1.get('/chats', async (req) => ({ chats: db.listTracked(client(req).id) }))
+    v1.get('/chats', async (req) => ({ chats: db.listTracked(client(req).id).filter((c) => !isGroupJid(c.phone)) }))
 
     v1.put('/chats/:phone', async (req) => {
       const phone = phoneParam(req)
@@ -85,6 +85,36 @@ export function buildServer(cfg: Config, db: Db, gateway: Gateway, logger: boole
 
     v1.delete('/chats/:phone', async (req) => {
       if (!gateway.untrack(client(req).id, phoneParam(req))) throw fail(404, 'not_found', 'Chat is not tracked')
+      return { ok: true }
+    })
+
+    // --- groups: read only. The list of the account's groups is private, so it is for admin clients. ---
+
+    const groupParam = (req: FastifyRequest) => {
+      const id = (req.params as { id: string }).id
+      if (!isGroupJid(id)) throw fail(400, 'invalid_group', 'Group id is not valid')
+      return id
+    }
+
+    v1.get('/groups', async (req) => {
+      admin(req)
+      return { groups: await gateway.groups(client(req).id) }
+    })
+
+    v1.put('/groups/:id', async (req) => {
+      admin(req)
+      const id = groupParam(req)
+      const label = (req.body as { label?: unknown } | null)?.label
+      if (label !== undefined && label !== null && (typeof label !== 'string' || label.length > 200)) {
+        throw fail(400, 'invalid_label', 'label must be a string of up to 200 characters')
+      }
+      const t = db.track(client(req).id, id, typeof label === 'string' && label ? label : null)
+      return { id: t.phone, label: t.label, trackedAt: t.trackedAt }
+    })
+
+    v1.delete('/groups/:id', async (req) => {
+      admin(req)
+      if (!gateway.untrack(client(req).id, groupParam(req))) throw fail(404, 'not_found', 'Group is not tracked')
       return { ok: true }
     })
 

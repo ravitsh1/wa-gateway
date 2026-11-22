@@ -5,14 +5,18 @@ import type { WAMessage } from 'baileys'
 import type { Config } from './config.js'
 import type { Db } from './db.js'
 import { hasDownloadableMedia, normalizeMessage } from './normalize.js'
+import { isGroupJid } from './phone.js'
 
 export type SessionState = 'starting' | 'qr' | 'connected' | 'disconnected' | 'logged_out'
 export type SessionStatus = { state: SessionState; qr: string | null; phone: string | null }
+export type GroupInfo = { id: string; name: string; participants: number }
 
 /** What the gateway needs from the WhatsApp connection. */
 export interface Transport {
   status(): SessionStatus
   sendText(phone: string, text: string): Promise<string>
+  /** The groups the account is a member of. */
+  groups(): Promise<GroupInfo[]>
   logout(): Promise<void>
 }
 
@@ -64,10 +68,12 @@ export class Gateway {
   }
 
   /**
-   * Entry point for every 1:1 message the connection sees (both directions).
+   * Entry point for every message the connection sees in a 1:1 chat or a group (both directions).
+   * A chat is named by its phone, a group by its address; both are tracked in the same list.
    * Messages of chats nobody tracks are dropped here: nothing is stored or logged.
    */
   async onMessage(phone: string, msg: WAMessage, download: () => Promise<Buffer>) {
+    const group = isGroupJid(phone)
     const trackers = this.db.trackersOf(phone)
     if (trackers.length === 0) return
     const m = normalizeMessage(msg)
@@ -81,7 +87,10 @@ export class Gateway {
     if (m.media) {
       media = { ...m.media, id: null, url: null, error: null }
       if (hasDownloadableMedia(m)) {
-        if (m.media.size !== null && m.media.size > this.cfg.maxMediaBytes) {
+        if (group && (m.kind === 'video' || m.kind === 'sticker')) {
+          // a group is read for what it announces; its videos and stickers are not fetched
+          media.error = 'skipped'
+        } else if (m.media.size !== null && m.media.size > this.cfg.maxMediaBytes) {
           media.error = 'too_large'
         } else {
           try {
@@ -115,7 +124,7 @@ export class Gateway {
 
     const message = { ...m, media, sentViaApi: m.direction === 'out' && this.sentViaApi.has(m.id) }
     for (const r of recipients) {
-      this.db.enqueue(r.clientId, { event: 'message', deliveryId: randomUUID(), chat: { phone }, message })
+      this.db.enqueue(r.clientId, { event: 'message', deliveryId: randomUUID(), chat: group ? { group: phone } : { phone }, message })
     }
     this.onQueued()
   }
@@ -168,6 +177,18 @@ export class Gateway {
     const p = this.sendChain.then(run, run)
     this.sendChain = p.catch(() => {})
     return p
+  }
+
+  /** The account's groups, each marked with whether the calling client tracks it. Asked from WhatsApp, not stored. */
+  async groups(clientId: string): Promise<(GroupInfo & { tracked: boolean })[]> {
+    if (!this.transport || this.transport.status().state !== 'connected') {
+      throw new GatewayError(503, 'not_connected', 'WhatsApp session is not connected')
+    }
+    const tracked = new Set(this.db.listTracked(clientId).map((t) => t.phone))
+    return (await this.transport.groups())
+      .filter((g) => isGroupJid(g.id))
+      .map((g) => ({ ...g, tracked: tracked.has(g.id) }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'))
   }
 
   untrack(clientId: string, phone: string): boolean {

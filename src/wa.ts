@@ -11,8 +11,8 @@ import {
   type WASocket,
 } from 'baileys'
 import { pino } from 'pino'
-import type { Gateway, SessionState, SessionStatus, Transport } from './gateway.js'
-import { isLidJid, jidToPhone, keyToPhone, phoneToJid } from './phone.js'
+import type { Gateway, GroupInfo, SessionState, SessionStatus, Transport } from './gateway.js'
+import { isGroupJid, isLidJid, jidToPhone, keyToPhone, phoneToJid } from './phone.js'
 
 type Log = { info: (o: object, m?: string) => void; warn: (o: object, m?: string) => void }
 
@@ -31,6 +31,7 @@ export class WhatsApp implements Transport {
   private authDir: string
   // Library logs can include message metadata; keep only errors.
   private libLog = pino({ level: 'error' })
+  private groupList: { at: number; groups: GroupInfo[] } | null = null
 
   constructor(
     dataDir: string,
@@ -102,8 +103,10 @@ export class WhatsApp implements Transport {
     })
   }
 
-  /** Resolves the chat to a phone number; anything that is not a 1:1 chat (a group, a status update, a channel) resolves to null and is ignored. */
+  /** Resolves the chat to a phone number, or to the group's address; a status update, a channel or a broadcast list resolves to null and is ignored. */
   private async chatPhone(sock: WASocket, msg: WAMessage): Promise<string | null> {
+    // a group is named by its own address; whether anyone tracks it is decided by the gateway
+    if (isGroupJid(msg.key?.remoteJid)) return msg.key.remoteJid
     const direct = keyToPhone(msg.key)
     if (direct) return direct
     const jid = msg.key?.remoteJid
@@ -125,6 +128,16 @@ export class WhatsApp implements Transport {
     const id = sent?.key?.id
     if (!id) throw new Error('message was not sent')
     return id
+  }
+
+  /** Asked from WhatsApp each time, at most once a minute: the list is only needed when the owner picks groups to follow. */
+  async groups(): Promise<GroupInfo[]> {
+    if (!this.sock) throw new Error('not connected')
+    if (this.groupList && Date.now() - this.groupList.at < 60_000) return this.groupList.groups
+    const all = await this.sock.groupFetchAllParticipating()
+    const groups = Object.values(all).map((g) => ({ id: g.id, name: g.subject || '', participants: g.participants?.length ?? 0 }))
+    this.groupList = { at: Date.now(), groups }
+    return groups
   }
 
   async logout() {

@@ -12,8 +12,11 @@ text replies. MyBase is the first client; other apps can be added in `clients.js
 
 ## What it does and does not do
 
-- Only **1:1 chats that a client tracked by phone number** are processed. Groups, statuses,
-  newsletters and every untracked chat are dropped in memory: nothing is stored or logged.
+- Only **1:1 chats that a client tracked by phone number**, and **groups an admin client tracked
+  by their id**, are processed. Statuses, newsletters and every untracked chat or group are
+  dropped in memory: nothing is stored or logged.
+- Groups are **read only**: their messages are forwarded, and there is no way to send into one.
+  Videos and stickers of a group are not downloaded (`media.error` is `skipped`).
 - A chat is forwarded **from the moment it was tracked**. History sync is off; older messages
   are ignored.
 - Both directions are forwarded (incoming, and what you send from your phone), so the client
@@ -63,6 +66,9 @@ Errors: `{ "error": "<code>", "message": "..." }`.
 | GET | `/v1/chats` | Chats this client tracks |
 | PUT | `/v1/chats/:phone` | Start tracking. Optional body `{ "label": "..." }` |
 | DELETE | `/v1/chats/:phone` | Stop tracking; stored media of the chat is deleted |
+| GET | `/v1/groups` | Admin clients. `{ groups: [{ id, name, participants, tracked }] }`, asked from WhatsApp (`503 not_connected` while offline) |
+| PUT | `/v1/groups/:id` | Admin clients. Start tracking a group (`id` as listed, e.g. `120363...@g.us`). Optional body `{ "label": "..." }` |
+| DELETE | `/v1/groups/:id` | Admin clients. Stop tracking; stored media of the group is deleted |
 | POST | `/v1/messages` | `{ "phone", "text" }` → `{ phone, id }`. Only to a chat this client tracks (`403 chat_not_tracked`), only while connected (`503 not_connected`) |
 | GET | `/v1/media/:id` | The file, for a client that tracks the chat it came from |
 
@@ -85,7 +91,7 @@ endpoint delays later events. Delivery is at-least-once: de-duplicate on `messag
 {
   "event": "message",
   "deliveryId": "uuid",
-  "chat": { "phone": "972501234567" },
+  "chat": { "phone": "972501234567" },   // for a group: { "group": "120363...@g.us" }
   "message": {
     "id": "3EB0...",
     "direction": "in",            // "out" = sent by the account owner (phone or API)
@@ -93,7 +99,7 @@ endpoint delays later events. Delivery is at-least-once: de-duplicate on `messag
     "timestamp": 1795194193,      // unix seconds
     "kind": "audio",              // text | audio | image | video | document | sticker | location | contact | other
     "text": null,                 // text or media caption
-    "senderName": "Dana",
+    "senderName": "Dana",         // in a group: the member who wrote
     "media": {
       "id": "uuid", "url": "https://.../v1/media/uuid",   // null when error is set
       "mime": "audio/ogg", "filename": null, "size": 18234,
@@ -111,4 +117,4 @@ when the connection state changes, e.g. to alert when the device was unlinked.
 
 ## Not in this version
 
-Sending media, quoted replies, edits / deletions / reactions, groups.
+Sending media, quoted replies, edits / deletions / reactions, sending into groups.
